@@ -60,9 +60,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	embedModel := s.retriever.Params().EmbedModel
 	data := make([]map[string]any, 0, len(models))
 	for _, m := range models {
-		if ollama.IsEmbeddingModel(m) || m.Name == s.cfg.EmbedModel || strings.HasPrefix(m.Name, s.cfg.EmbedModel+":") {
+		if ollama.IsEmbeddingModel(m) || m.Name == embedModel || strings.HasPrefix(m.Name, embedModel+":") {
 			continue
 		}
 		created := time.Now().Unix()

@@ -62,11 +62,12 @@ if (-not $SkipPull) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Get-Cfg 'DOCS_PATH' './data/docs') | Out-Null
+New-Item -ItemType Directory -Force -Path (Get-Cfg 'DOCS_PATH' './data/docs'), './data/config' | Out-Null
 & docker @compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed' }
 
 Write-Host ''
+Write-Host "Console   : http://localhost:$(Get-Cfg 'INGEST_PORT' '8001')   (documents, models, settings)"
 Write-Host "OpenWebUI : http://localhost:$webuiPort   (pick a 'rag/...' model)"
 Write-Host "Gateway   : http://localhost:$(Get-Cfg 'GATEWAY_PORT' '8090')/v1"
 Write-Host "Ingest API: http://localhost:$(Get-Cfg 'INGEST_PORT' '8001')/docs"

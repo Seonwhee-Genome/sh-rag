@@ -40,6 +40,21 @@ class QdrantStore:
             self.client.create_payload_index(self.collection, field, qm.PayloadSchemaType.KEYWORD)
         self.client.create_payload_index(self.collection, "chunk_index", qm.PayloadSchemaType.INTEGER)
 
+    def ping(self) -> None:
+        self.client.get_collections()
+
+    def search(self, vector: list[float], limit: int, threshold: float) -> list[dict[str, Any]]:
+        if not self.client.collection_exists(self.collection):
+            return []
+        res = self.client.query_points(
+            self.collection,
+            query=vector,
+            limit=limit,
+            score_threshold=threshold or None,
+            with_payload=["source", "page", "text"],
+        )
+        return [{"score": p.score, **(p.payload or {})} for p in res.points]
+
     def upsert(self, points: list[qm.PointStruct], batch: int = 256) -> None:
         for i in range(0, len(points), batch):
             self.client.upsert(self.collection, points=points[i : i + batch], wait=True)

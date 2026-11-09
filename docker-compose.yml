@@ -30,10 +30,18 @@ services:
       CHUNK_SIZE: ${CHUNK_SIZE:-1000}
       CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
       SCAN_INTERVAL: ${SCAN_INTERVAL:-30}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      RAG_SCORE_THRESHOLD: ${RAG_SCORE_THRESHOLD:-0.35}
+      RUNTIME_SETTINGS_PATH: /data/config/settings.json
+      HOST_DOCS_PATH: ${DOCS_PATH:-./data/docs}
+      WEBUI_URL: http://localhost:${WEBUI_PORT:-3000}
     ports:
+      # Also serves the web console at http://localhost:8001
       - "127.0.0.1:${INGEST_PORT:-8001}:8001"
     volumes:
       - ${DOCS_PATH:-./data/docs}:/data/docs
+      # Runtime settings written by the console, read by the gateway.
+      - ${CONFIG_PATH:-./data/config}:/data/config
 
   gateway:
     build: ./gateway
@@ -51,8 +59,11 @@ services:
       RAG_MAX_CONTEXT_CHARS: ${RAG_MAX_CONTEXT_CHARS:-12000}
       RAG_SHOW_SOURCES: ${RAG_SHOW_SOURCES:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      RUNTIME_SETTINGS_PATH: /data/config/settings.json
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8090}:8080"
+    volumes:
+      - ${CONFIG_PATH:-./data/config}:/data/config:ro
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:${OPENWEBUI_VERSION:-v0.6.5}

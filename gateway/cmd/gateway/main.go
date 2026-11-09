@@ -18,6 +18,7 @@ import (
 	"github.com/sh-rag/gateway/internal/qdrant"
 	"github.com/sh-rag/gateway/internal/rag"
 	"github.com/sh-rag/gateway/internal/server"
+	"github.com/sh-rag/gateway/internal/settings"
 )
 
 func main() {
@@ -37,13 +38,21 @@ func main() {
 	}}
 
 	oc := ollama.New(cfg.OllamaURL, hc)
+	runtime := settings.NewStore(cfg.RuntimeSettingsPath, settings.Values{
+		EmbedModel: cfg.EmbedModel, TopK: cfg.TopK, Threshold: cfg.ScoreThreshold,
+	}, log)
 	retriever := &rag.Retriever{
-		Embedder:   oc,
-		Searcher:   qdrant.New(cfg.QdrantURL, cfg.QdrantAPIKey, hc),
-		Collection: cfg.Collection,
-		EmbedModel: cfg.EmbedModel,
-		TopK:       cfg.TopK,
-		Threshold:  cfg.ScoreThreshold,
+		Embedder: oc,
+		Searcher: qdrant.New(cfg.QdrantURL, cfg.QdrantAPIKey, hc),
+		Params: func() rag.Params {
+			v := runtime.Get()
+			return rag.Params{
+				Collection: settings.CollectionName(cfg.Collection, v.EmbedModel),
+				EmbedModel: v.EmbedModel,
+				TopK:       v.TopK,
+				Threshold:  v.Threshold,
+			}
+		},
 	}
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -56,8 +65,10 @@ func main() {
 	defer stop()
 
 	go func() {
+		p := retriever.Params()
 		log.Info("gateway listening", "addr", cfg.ListenAddr, "ollama", cfg.OllamaURL, "qdrant", cfg.QdrantURL,
-			"collection", cfg.Collection, "embed_model", cfg.EmbedModel, "auth", cfg.APIKey != "")
+			"collection", p.Collection, "embed_model", p.EmbedModel, "runtime_settings", cfg.RuntimeSettingsPath,
+			"auth", cfg.APIKey != "")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server failed", "err", err)
 			os.Exit(1)

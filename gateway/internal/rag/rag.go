@@ -28,27 +28,37 @@ type Chunk struct {
 	Score  float64 `json:"score"`
 }
 
-// Retriever embeds a query and fetches matching chunks.
-type Retriever struct {
-	Embedder   Embedder
-	Searcher   Searcher
+// Params are the retrieval settings in effect for one request.
+type Params struct {
 	Collection string
 	EmbedModel string
 	TopK       int
 	Threshold  float64
 }
 
+// Static returns a Params provider with fixed values.
+func Static(p Params) func() Params { return func() Params { return p } }
+
+// Retriever embeds a query and fetches matching chunks. Params is consulted
+// on every call, so settings changed at runtime apply to the next request.
+type Retriever struct {
+	Embedder Embedder
+	Searcher Searcher
+	Params   func() Params
+}
+
 // Retrieve returns up to TopK chunks relevant to query. A missing collection
 // (nothing ingested yet) is not an error: it yields no chunks.
 func (r *Retriever) Retrieve(ctx context.Context, query string, topK int) ([]Chunk, error) {
+	p := r.Params()
 	if topK <= 0 {
-		topK = r.TopK
+		topK = p.TopK
 	}
-	vecs, err := r.Embedder.Embed(ctx, r.EmbedModel, []string{query})
+	vecs, err := r.Embedder.Embed(ctx, p.EmbedModel, []string{query})
 	if err != nil {
 		return nil, err
 	}
-	hits, err := r.Searcher.Query(ctx, r.Collection, vecs[0], topK, r.Threshold)
+	hits, err := r.Searcher.Query(ctx, p.Collection, vecs[0], topK, p.Threshold)
 	if errors.Is(err, qdrant.ErrCollectionNotFound) {
 		return nil, nil
 	}

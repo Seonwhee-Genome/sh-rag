@@ -5,12 +5,13 @@ A local, private retrieval-augmented chat stack that runs the same on **Windows*
 - **OpenWebUI** is the chat interface.
 - **Ollama** runs the chat and embedding models.
 - **Go gateway** (`gateway/`) is the hot path for every chat message. It is an OpenAI-compatible API that embeds the question, searches Qdrant, injects the best passages into the prompt, and streams the answer from Ollama, with a sources list. It uses only the standard library and a pooled HTTP transport, and streams in a single pass with no buffering.
-- **Python ingest** (`ingest/`) handles document processing, where Python's parsing ecosystem shines. It parses PDF, DOCX, HTML, Markdown, text and code, chunks and embeds them, and stores them in Qdrant. It watches a folder and also accepts uploads.
+- **Python ingest** (`ingest/`) handles document processing, where Python's parsing ecosystem shines. It parses PDF, DOCX, HTML, Markdown, text and code, chunks and embeds them, and stores them in Qdrant. It watches a folder, accepts uploads, and serves the **web console** for documents, models and retrieval settings.
 - **Qdrant** is the vector database.
 
 ```mermaid
 flowchart LR
   U[Browser] --> W[OpenWebUI :3000]
+  U --> I
   W -- "rag/* models (OpenAI API)" --> G[Go gateway :8090]
   W -- "plain models" --> O[(Ollama :11434)]
   G -- embed query --> O
@@ -19,6 +20,7 @@ flowchart LR
   D[[data/docs folder]] --> I[Python ingest :8001]
   I -- embed chunks --> O
   I -- upsert --> Q
+  I -. "settings.json (embedding model, top-k, threshold)" .-> G
 ```
 
 ## Prerequisites
@@ -55,13 +57,33 @@ The script does four things:
 
 Then:
 
-1. Drop documents into `data/docs/`. Subfolders are fine. The ingest service picks up new, changed and deleted files within `SCAN_INTERVAL` seconds.
-2. Open **http://localhost:3000** and create the admin account on first visit.
+1. Open the **console at http://localhost:8001** and drag documents onto it, or copy them into `data/docs/`. Subfolders are fine.
+2. Open **OpenWebUI at http://localhost:3000** and create the admin account on first visit.
 3. Choose a model named **`rag/<model>`** to chat over your documents. Plain Ollama models without the prefix still work as normal, non-RAG chat.
 
 Stop with `scripts/stop.ps1` / `scripts/stop.sh`. Add `-Purge` / `--purge` to also delete the vector index and the OpenWebUI data.
 
-## Managing documents
+## Console (http://localhost:8001)
+
+A small web console for everything outside of chatting:
+
+| Tab | What you can do |
+|---|---|
+| **Documents** | Drag and drop files to embed them. Search the list of indexed documents and delete them. **Sync folder** picks up changes now instead of on the next scan. **Re-embed all** rebuilds every document from scratch. |
+| **Models** | Download Ollama models with a progress bar, delete them, and **switch the embedding model**. |
+| **Retrieval** | Change the number of passages per question and the minimum similarity, then **test a search** to see exactly what a question retrieves. |
+
+The status bar shows whether Ollama and Qdrant are reachable and which embedding model is active.
+
+**Switching the embedding model.** The new model is downloaded if needed, and every document is embedded into a *separate* Qdrant collection, one per model (e.g. `documents_bge_m3`). This runs in the background, and chat keeps using the old index until the new one is complete; then the gateway switches over automatically. Old indexes are kept, so switching back takes about a second.
+
+**Choosing a chat model.** Pick one per conversation in OpenWebUI's model selector. Any chat model downloaded in the console appears there as `rag/<name>` automatically.
+
+Settings changed in the console are saved to `data/config/settings.json`. The gateway re-reads that file within a second, so no restart is needed. Values in that file take precedence over `EMBED_MODEL`, `RAG_TOP_K` and `RAG_SCORE_THRESHOLD` in `.env`, which act only as initial defaults.
+
+## Managing documents from the command line
+
+Everything in the console is also available as an API (interactive docs at http://localhost:8001/docs) and from the CLI:
 
 | Action | How |
 |---|---|
@@ -69,9 +91,10 @@ Stop with `scripts/stop.ps1` / `scripts/stop.sh`. Add `-Purge` / `--purge` to al
 | List | `curl http://localhost:8001/documents` |
 | Remove | Delete the file, or `curl -X DELETE http://localhost:8001/documents/<doc_id or source path>` |
 | Re-index | `scripts/reindex.ps1` / `scripts/reindex.sh` (`--force` re-embeds everything) |
+| Switch embedding model | `docker compose exec ingest python -m ingest embedding nomic-embed-text` |
 | Inspect retrieval | `curl -H "Authorization: Bearer sh-rag-local-key" -d '{"query":"...","top_k":5}' http://localhost:8090/v1/retrieve` |
 
-Interactive API docs for ingest: http://localhost:8001/docs. Uploaded files are saved under `data/docs/uploads/`, so they survive a re-index.
+Uploaded files are saved under `data/docs/uploads/`, so they survive a re-index.
 
 ## Configuration
 
@@ -80,10 +103,11 @@ All settings are in `.env`. See [.env.example](.env.example) for the full list.
 | Variable | Default | Notes |
 |---|---|---|
 | `CHAT_MODEL` | `qwen2.5:7b` | Pulled by the start script. Every installed chat model shows up as `rag/<name>`. |
-| `EMBED_MODEL` | `bge-m3` | Multilingual (Korean/English). **Changing it requires** `reindex --recreate`. |
+| `EMBED_MODEL` | `bge-m3` | Initial embedding model; multilingual (Korean/English). Switch later in the console. |
 | `DOCS_PATH` | `./data/docs` | Any host folder, e.g. `C:/Users/me/Documents/kb` or `~/Documents/kb`. |
-| `RAG_TOP_K` | `5` | Passages per question. |
-| `RAG_SCORE_THRESHOLD` | `0.35` | Minimum cosine similarity. Lower it if answers miss context. |
+| `RAG_TOP_K` | `5` | Initial passages per question (adjustable in the console). |
+| `RAG_SCORE_THRESHOLD` | `0.35` | Initial minimum cosine similarity (adjustable in the console). |
+| `QDRANT_COLLECTION` | `documents` | Collection name prefix; the model name is appended (e.g. `documents_bge_m3`). |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | In characters. Re-index after changing them. |
 | `RAG_SHOW_SOURCES` | `true` | Appends a **Sources** list to answers. |
 | `GATEWAY_API_KEY` | `sh-rag-local-key` | Shared secret between OpenWebUI and the gateway. |
@@ -121,7 +145,9 @@ Layout:
 
 ```
 gateway/   Go: cmd/gateway (main), internal/{config,ollama,qdrant,rag,server}
-ingest/    Python: ingest/{loaders,chunker,embedder,store,pipeline,api,cli}.py, tests/
+gateway/internal/settings  runtime settings shared with the console
+ingest/    Python: ingest/{loaders,chunker,embedder,store,pipeline,runtime,ollama_api,jobs,api,cli}.py
+ingest/ingest/static/index.html   the web console (no build step, no external assets)
 scripts/   start / stop / reindex for PowerShell and bash
 docker-compose.yml, compose.gpu.yml, .env.example
 ```
@@ -131,6 +157,7 @@ docker-compose.yml, compose.gpu.yml, .env.example
 - **No `rag/*` models in OpenWebUI.** OpenWebUI saves its connection settings in its own database on first start. After that, the `OPENAI_API_*` env vars are ignored. Check *Admin Panel → Settings → Connections*: the OpenAI API entry should be `http://gateway:8080/v1` with your `GATEWAY_API_KEY`. Also check `docker compose logs gateway`.
 - **"Ollama is not reachable".** Start the Ollama app (look for the tray or menu bar icon), or use the Docker Ollama option. On Docker Desktop, `host.docker.internal` reaches the host's `localhost:11434`. With Colima, set `OLLAMA_BASE_URL=http://host.lima.internal:11434`.
 - **Port already in use.** Change the matching `*_PORT` in `.env`.
-- **Dimension mismatch error after changing `EMBED_MODEL`.** Run `scripts/reindex.ps1 -Recreate` / `scripts/reindex.sh --recreate`.
+- **Embedding model switch failed.** The job card in the console shows the reason. A common one is that the model can't produce embeddings (it's a chat model). The previous model stays active, so nothing breaks.
+- **Index looks corrupted.** Run `scripts/reindex.ps1 -Recreate` / `scripts/reindex.sh --recreate` to rebuild the active model's collection from the documents folder.
 - **Scanned PDFs produce no text.** These are images, not text. OCR them first (e.g. with `ocrmypdf`).
-- **Answers ignore the documents.** Call `/v1/retrieve` with the question. If nothing comes back, lower `RAG_SCORE_THRESHOLD`. If the right passage comes back but the answer is still wrong, try a larger chat model.
+- **Answers ignore the documents.** Try the question in the console's *Retrieval → Test a search*. If nothing comes back, lower `RAG_SCORE_THRESHOLD`. If the right passage comes back but the answer is still wrong, try a larger chat model.

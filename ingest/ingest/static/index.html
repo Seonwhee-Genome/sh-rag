@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sh-rag Console</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1c2230; --muted: #626d82; --border: #e1e5ec;
+    --accent: #3756d4; --accent-text: #ffffff; --accent-weak: #e9eefe;
+    --ok: #2b8a3e; --ok-weak: #e6f4ea; --warn: #b35c00; --warn-weak: #fff1e0;
+    --err: #c92a2a; --err-weak: #fdeaea; --track: #e8ebf1;
+    --radius: 10px; --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #181c22; --text: #e5e8ee; --muted: #98a2b3; --border: #2a3039;
+      --accent: #7b93ff; --accent-text: #0f1216; --accent-weak: #222a45;
+      --ok: #5cc27a; --ok-weak: #18301f; --warn: #f0a040; --warn-weak: #35270f;
+      --err: #ff7b7b; --err-weak: #3a1c1c; --track: #2a3039; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12.5px; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 24px;
+    background: var(--panel); border-bottom: 1px solid var(--border); }
+  .brand { font-weight: 700; font-size: 16px; }
+  .brand span { color: var(--muted); font-weight: 500; }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+    background: var(--track); color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill.ok { background: var(--ok-weak); color: var(--ok); }
+  .pill.err { background: var(--err-weak); color: var(--err); }
+  .pill.info { background: var(--accent-weak); color: var(--accent); }
+  .pill.info::before { display: none; }
+  nav { display: flex; gap: 4px; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav button { border: 0; background: none; color: var(--muted); padding: 12px 14px; font: inherit; font-weight: 600;
+    cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+  section { display: grid; gap: 20px; }
+  section[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow); min-width: 0; }
+  .card h2 { margin: 0 0 4px; font-size: 15px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12.5px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  input[type=text], input[type=number], input[type=search] { font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+  input:focus-visible, button:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .grow { flex: 1; min-width: 200px; }
+  .btn { font: inherit; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; text-decoration: none; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn.danger { color: var(--err); }
+  .btn.danger:hover { border-color: var(--err); }
+  .btn.sm { padding: 3px 10px; font-size: 12.5px; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .link { color: var(--accent); font-weight: 600; }
+  a { color: var(--accent); }
+  .drop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 32px 16px; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-weak); }
+  .drop strong { font-size: 15px; }
+  .upload-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; }
+  .upload-list:empty { display: none; }
+  .upload-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 4px 0;
+    border-bottom: 1px solid var(--border); }
+  .upload-list li:last-child { border-bottom: 0; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.actions { text-align: right; width: 1%; white-space: nowrap; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--track); color: var(--muted); }
+  .tag.embedding { background: var(--warn-weak); color: var(--warn); }
+  .tag.chat { background: var(--accent-weak); color: var(--accent); }
+  .tag.active { background: var(--ok-weak); color: var(--ok); }
+  .status-ok { color: var(--ok); } .status-err { color: var(--err); } .status-warn { color: var(--warn); }
+  .empty { text-align: center; padding: 28px 8px; color: var(--muted); }
+  .active-model { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border-radius: 8px; background: var(--bg); }
+  .active-model code { font-size: 14px; font-weight: 600; }
+  .bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+  .bar.indeterminate > div { width: 30% !important; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .field { display: grid; gap: 6px; margin-top: 14px; max-width: 420px; }
+  .field label { font-weight: 600; }
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  .range-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .range-row output { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .results { display: grid; gap: 10px; margin-top: 14px; }
+  .result { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .result-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; margin-bottom: 6px; }
+  .result-text { white-space: pre-wrap; font-size: 13px; max-height: 9em; overflow: auto; }
+  .score { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .jobs { position: fixed; right: 20px; bottom: 20px; width: min(380px, calc(100vw - 40px)); display: grid; gap: 8px; z-index: 10; }
+  .job { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+    box-shadow: 0 6px 24px rgba(16, 24, 40, .14); display: grid; gap: 6px; }
+  .job-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
+  .job-msg { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .x { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+  .toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px;
+    background: var(--text); color: var(--bg); font-weight: 600; z-index: 20; max-width: calc(100vw - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.2); }
+  .toast.err { background: var(--err); color: #fff; }
+  .toast[hidden] { display: none; }
+  @media (max-width: 640px) {
+    header, nav { padding-left: 16px; padding-right: 16px; }
+    main { padding: 16px; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">sh-rag <span>console</span></div>
+  <div class="pills" id="status"><span class="pill">Checking services…</span></div>
+  <a id="webui-link" class="btn" target="_blank" rel="noopener">Open OpenWebUI ↗</a>
+</header>
+<nav>
+  <button data-tab="docs" class="active">Documents</button>
+  <button data-tab="models">Models</button>
+  <button data-tab="retrieval">Retrieval</button>
+</nav>
+
+<main>
+  <!-- Documents -->
+  <section id="tab-docs">
+    <div class="card">
+      <div id="drop" class="drop" tabindex="0" role="button" aria-label="Upload documents">
+        <input type="file" id="file-input" multiple hidden>
+        <strong>Drop files here</strong> or <span class="link">browse</span>
+        <div class="muted small" style="margin-top:6px">PDF, Word (.docx), HTML, Markdown, text, CSV, JSON, source code</div>
+      </div>
+      <ul id="upload-list" class="upload-list"></ul>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Indexed documents <span id="doc-count" class="muted"></span></h2>
+        <div class="row" style="margin:0">
+          <input type="search" id="doc-filter" placeholder="Filter by name…">
+          <button class="btn" id="sync-btn" title="Pick up new, changed and deleted files now">Sync folder</button>
+          <button class="btn" id="reembed-btn" title="Re-embed every document from scratch">Re-embed all</button>
+        </div>
+      </div>
+      <p class="muted small" id="folder-note"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Document</th><th class="num">Chunks</th><th class="hide-sm">Indexed</th><th></th></tr></thead>
+          <tbody id="doc-rows"></tbody>
+        </table>
+      </div>
+      <div id="doc-empty" class="empty" hidden>No documents yet. Drop files above or copy them into the documents folder.</div>
+    </div>
+  </section>
+
+  <!-- Models -->
+  <section id="tab-models" hidden>
+    <div class="card">
+      <h2>Embedding model</h2>
+      <p class="muted small" style="margin:0">Turns documents and questions into vectors. Switching re-embeds your documents into a
+        separate index in the background; chat keeps using the current one until the new index is ready. Old indexes are kept,
+        so switching back is quick.</p>
+      <div class="active-model"><span class="muted">Active</span> <code id="active-embed">—</code></div>
+      <div class="row">
+        <input type="text" class="grow" id="embed-input" list="embed-suggest" placeholder="Embedding model, e.g. bge-m3" autocomplete="off">
+        <datalist id="embed-suggest"></datalist>
+        <button class="btn primary" id="embed-btn">Switch</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Chat models</h2>
+      <p class="muted small" style="margin:0">Every chat model installed here shows up in OpenWebUI as <code>rag/&lt;name&gt;</code>
+        (with your documents) and as plain <code>&lt;name&gt;</code> (without). Choose one in OpenWebUI's model selector.</p>
+      <div class="row">
+        <input type="text" class="grow" id="pull-input" list="chat-suggest" placeholder="Model to download, e.g. qwen2.5:7b" autocomplete="off">
+        <datalist id="chat-suggest"></datalist>
+        <button class="btn primary" id="pull-btn">Download</button>
+        <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse library ↗</a>
+      </div>
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Model</th><th>Type</th><th class="hide-sm">Parameters</th><th class="num">Size</th><th></th></tr></thead>
+          <tbody id="model-rows"></tbody>
+        </table>
+      </div>
+      <div id="model-empty" class="empty" hidden>No models installed.</div>
+    </div>
+  </section>
+
+  <!-- Retrieval -->
+  <section id="tab-retrieval" hidden>
+    <div class="card">
+      <h2>Retrieval settings</h2>
+      <p class="muted small" style="margin:0">Applied to the next chat message; no restart needed.</p>
+      <div class="field">
+        <label for="topk">Passages per question</label>
+        <input type="number" id="topk" min="1" max="50" style="width:100px">
+        <span class="muted small">More passages give the model more context but make answers slower.</span>
+      </div>
+      <div class="field">
+        <label for="threshold">Minimum similarity</label>
+        <div class="range-row"><input type="range" id="threshold" min="0" max="1" step="0.01"><output id="threshold-out"></output></div>
+        <span class="muted small">Lower it if answers miss relevant documents; raise it if they pull in unrelated text.</span>
+      </div>
+      <div class="row"><button class="btn primary" id="save-settings">Save</button><span id="settings-note" class="muted small"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Test a search</h2>
+      <p class="muted small" style="margin:0">See exactly which passages a question retrieves with the settings above.</p>
+      <form class="row" id="search-form">
+        <input type="text" class="grow" id="search-input" placeholder="Ask something your documents should answer…">
+        <button class="btn primary">Search</button>
+      </form>
+      <div id="search-results" class="results"></div>
+    </div>
+  </section>
+</main>
+
+<div class="jobs" id="jobs" aria-live="polite"></div>
+
+<script>
+const CHAT_SUGGESTIONS = ["qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b", "llama3.2:3b", "gemma3:4b", "gemma3:12b",
+  "exaone3.5:7.8b", "mistral:7b", "phi4:14b", "deepseek-r1:8b"];
+const EMBED_SUGGESTIONS = ["bge-m3", "nomic-embed-text", "mxbai-embed-large", "snowflake-arctic-embed2", "all-minilm",
+  "granite-embedding:278m"];
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const norm = (s) => (s || "").trim().toLowerCase().replace(/:latest$/, "");
+const sameModel = (a, b) => norm(a) === norm(b);
+const fmtBytes = (n) => { if (!n) return "—"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n.toFixed(i > 1 ? 1 : 0)} ${u[i]}`; };
+const fmtTime = (iso) => { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString(); };
+
+async function api(path, opts = {}) {
+  const init = { method: opts.method || "GET" };
+  if (opts.json !== undefined) { init.body = JSON.stringify(opts.json); init.headers = { "Content-Type": "application/json" }; }
+  else if (opts.body) init.body = opts.body;
+  const res = await fetch(path, init);
+  const isJson = (res.headers.get("content-type") || "").includes("json");
+  const data = isJson ? await res.json() : await res.text();
+  if (!res.ok) {
+    let msg = data && data.detail !== undefined ? data.detail : data;
+    if (Array.isArray(msg)) msg = msg.map((d) => d.msg).join("; ");
+    throw new Error(typeof msg === "string" && msg ? msg : res.statusText);
+  }
+  return data;
+}
+
+let toastTimer;
+function toast(msg, isError = false) {
+  let el = $(".toast");
+  if (!el) { el = document.createElement("div"); el.className = "toast"; el.setAttribute("role", "status"); document.body.append(el); }
+  el.textContent = msg; el.classList.toggle("err", isError); el.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (el.hidden = true), isError ? 6000 : 3000);
+}
+
+/* ---------- tabs ---------- */
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("main > section").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
+  history.replaceState(null, "", `#${name}`);
+  if (name === "docs") loadDocs();
+  if (name === "models") loadModels();
+  if (name === "retrieval") loadSettings();
+}
+document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+const currentTab = () => document.querySelector("nav button.active").dataset.tab;
+
+/* ---------- status ---------- */
+async function loadStatus() {
+  try {
+    const s = await api("/status");
+    const pill = (ok, label, title = "") => `<span class="pill ${ok ? "ok" : "err"}" title="${esc(title)}">${esc(label)}</span>`;
+    $("#status").innerHTML =
+      pill(s.ollama.ok, s.ollama.ok ? `Ollama ${s.ollama.version}` : "Ollama unreachable", s.ollama.error || s.ollama.url) +
+      pill(s.qdrant.ok, s.qdrant.ok ? "Qdrant" : "Qdrant unreachable", s.qdrant.error || "") +
+      `<span class="pill info" title="Active embedding model">Embedding: ${esc(s.embed_model)}</span>`;
+    $("#webui-link").href = s.webui_url;
+    $("#active-embed").textContent = s.embed_model;
+    $("#folder-note").innerHTML = `Files in <code>${esc(s.docs_path)}</code> sync automatically every ${esc(s.scan_interval)}s. ` +
+      `Uploads are saved to its <code>uploads/</code> folder.`;
+  } catch (e) {
+    $("#status").innerHTML = `<span class="pill err">Ingest service unreachable</span>`;
+  }
+}
+
+/* ---------- documents ---------- */
+let docs = [];
+async function loadDocs() {
+  try { docs = (await api("/documents")).documents; renderDocs(); }
+  catch (e) { toast(`Could not load documents: ${e.message}`, true); }
+}
+function renderDocs() {
+  const q = $("#doc-filter").value.trim().toLowerCase();
+  const rows = docs.filter((d) => !q || (d.source || "").toLowerCase().includes(q));
+  $("#doc-count").textContent = docs.length ? `(${docs.length})` : "";
+  $("#doc-rows").innerHTML = rows.map((d) => `
+    <tr>
+      <td class="mono">${esc(d.source)}</td>
+      <td class="num">${esc(d.chunks ?? "?")}</td>
+      <td class="muted small hide-sm">${esc(fmtTime(d.ingested_at))}</td>
+      <td class="actions"><button class="btn sm danger" data-del-doc="${esc(d.doc_id)}" data-name="${esc(d.source)}">Delete</button></td>
+    </tr>`).join("");
+  $("#doc-empty").hidden = docs.length > 0;
+}
+$("#doc-filter").addEventListener("input", renderDocs);
+$("#doc-rows").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-del-doc]");
+  if (!btn) return;
+  if (!confirm(`Delete "${btn.dataset.name}"?\n\nThis removes it from the index and deletes the file from the documents folder.`)) return;
+  btn.disabled = true;
+  try { await api(`/documents/${encodeURIComponent(btn.dataset.delDoc)}`, { method: "DELETE" }); toast(`Deleted ${btn.dataset.name}`); loadDocs(); }
+  catch (e) { toast(e.message, true); btn.disabled = false; }
+});
+
+const drop = $("#drop"), fileInput = $("#file-input");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); uploadFiles([...e.dataTransfer.files]); });
+fileInput.addEventListener("change", () => { uploadFiles([...fileInput.files]); fileInput.value = ""; });
+
+async function uploadFiles(files) {
+  if (!files.length) return;
+  const list = $("#upload-list");
+  for (const file of files) {
+    const li = document.createElement("li");
+    const name = document.createElement("span"); name.className = "mono"; name.textContent = file.name;
+    const state = document.createElement("span"); state.className = "muted"; state.textContent = "Embedding…";
+    li.append(name, state);
+    list.prepend(li);
+    try {
+      const form = new FormData(); form.append("files", file);
+      const r = (await api("/documents", { method: "POST", body: form })).results[0];
+      const labels = { indexed: [`Indexed · ${r.chunks} chunks`, "status-ok"], unchanged: ["Unchanged", "muted"],
+        empty: ["No text found (scanned PDF?)", "status-warn"], unsupported: [r.error || "Unsupported file type", "status-err"] };
+      const [text, cls] = labels[r.status] || [r.error || r.status, "status-err"];
+      state.textContent = text; state.className = cls;
+    } catch (e) { state.textContent = e.message; state.className = "status-err"; }
+  }
+  loadDocs();
+}
+
+$("#sync-btn").addEventListener("click", () => startJob("/reindex?background=true"));
+$("#reembed-btn").addEventListener("click", () => {
+  if (confirm("Re-embed every document from scratch? This can take a while for large collections.")) startJob("/reindex?force=true&background=true");
+});
+
+/* ---------- models ---------- */
+let models = [];
+async function loadModels() {
+  try {
+    const data = await api("/models");
+    models = data.models;
+    $("#active-embed").textContent = data.active_embed_model;
+    renderModels(data.active_embed_model);
+  } catch (e) {
+    models = [];
+    $("#model-rows").innerHTML = "";
+    $("#model-empty").hidden = false;
+    $("#model-empty").textContent = e.message;
+  }
+}
+function renderModels(active) {
+  $("#model-rows").innerHTML = models.map((m) => {
+    const isActive = m.kind === "embedding" && sameModel(m.name, active);
+    const params = [m.parameter_size, m.quantization].filter(Boolean).join(" · ");
+    return `<tr>
+      <td class="mono">${esc(m.name)}</td>
+      <td><span class="tag ${esc(m.kind)}">${esc(m.kind)}</span>${isActive ? ' <span class="tag active">active</span>' : ""}</td>
+      <td class="muted small hide-sm">${esc(params || "—")}</td>
+      <td class="num">${fmtBytes(m.size)}</td>
+      <td class="actions">${m.kind === "embedding" && !isActive
+        ? `<button class="btn sm" data-use-embed="${esc(m.name)}">Use</button> ` : ""}<button class="btn sm danger" data-del-model="${esc(m.name)}" ${isActive ? 'disabled title="Active embedding model"' : ""}>Delete</button></td>
+    </tr>`;
+  }).join("");
+  $("#model-empty").hidden = models.length > 0;
+  $("#model-empty").textContent = "No models installed.";
+  const installed = new Set(models.map((m) => norm(m.name)));
+  const embedOpts = [...new Set([...models.filter((m) => m.kind === "embedding").map((m) => m.name), ...EMBED_SUGGESTIONS])];
+  $("#embed-suggest").innerHTML = embedOpts.map((n) => `<option value="${esc(n)}">`).join("");
+  $("#chat-suggest").innerHTML = CHAT_SUGGESTIONS.filter((n) => !installed.has(norm(n))).map((n) => `<option value="${esc(n)}">`).join("");
+}
+$("#model-rows").addEventListener("click", async (ev) => {
+  const use = ev.target.closest("[data-use-embed]");
+  if (use) return switchEmbedding(use.dataset.useEmbed);
+  const del = ev.target.closest("[data-del-model]");
+  if (!del) return;
+  if (!confirm(`Delete model "${del.dataset.delModel}" from Ollama? You can download it again later.`)) return;
+  del.disabled = true;
+  try { await api(`/models/${encodeURIComponent(del.dataset.delModel)}`, { method: "DELETE" }); toast(`Deleted ${del.dataset.delModel}`); loadModels(); }
+  catch (e) { toast(e.message, true); del.disabled = false; }
+});
+$("#pull-btn").addEventListener("click", () => {
+  const model = $("#pull-input").value.trim();
+  if (!model) return $("#pull-input").focus();
+  startJob("/models/pull", { model }); $("#pull-input").value = "";
+});
+$("#pull-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pull-btn").click(); });
+$("#embed-btn").addEventListener("click", () => {
+  const model = $("#embed-input").value.trim();
+  if (!model) return $("#embed-input").focus();
+  switchEmbedding(model);
+});
+$("#embed-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#embed-btn").click(); });
+function switchEmbedding(model) {
+  const msg = `Switch the embedding model to "${model}"?\n\nThe model is downloaded if needed and all documents are re-embedded ` +
+    `in the background. Chat keeps using the current model until the new index is ready.`;
+  if (confirm(msg)) { startJob("/embedding", { model }); $("#embed-input").value = ""; }
+}
+
+/* ---------- retrieval ---------- */
+async function loadSettings() {
+  try {
+    const s = await api("/settings");
+    $("#topk").value = s.top_k;
+    $("#threshold").value = s.score_threshold;
+    $("#threshold-out").textContent = Number(s.score_threshold).toFixed(2);
+  } catch (e) { toast(e.message, true); }
+}
+$("#threshold").addEventListener("input", (e) => ($("#threshold-out").textContent = Number(e.target.value).toFixed(2)));
+$("#save-settings").addEventListener("click", async () => {
+  try {
+    const s = await api("/settings", { method: "PUT", json: { top_k: Number($("#topk").value), score_threshold: Number($("#threshold").value) } });
+    $("#settings-note").textContent = `Saved · ${s.top_k} passages, similarity ≥ ${Number(s.score_threshold).toFixed(2)}`;
+  } catch (e) { toast(e.message, true); }
+});
+$("#search-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const query = $("#search-input").value.trim();
+  if (!query) return;
+  const out = $("#search-results");
+  out.innerHTML = `<div class="muted">Searching…</div>`;
+  try {
+    const { results } = await api("/search", { method: "POST",
+      json: { query, top_k: Number($("#topk").value) || null, score_threshold: Number($("#threshold").value) } });
+    out.innerHTML = results.length ? results.map((r, i) => `
+      <div class="result">
+        <div class="result-head"><span class="mono">[${i + 1}] ${esc(r.source)}${r.page ? ` · p. ${esc(r.page)}` : ""}</span>
+          <span class="score">${Number(r.score).toFixed(3)}</span></div>
+        <div class="result-text">${esc(r.text)}</div>
+      </div>`).join("")
+      : `<div class="empty">Nothing above the similarity threshold. Try lowering it.</div>`;
+  } catch (err) { out.innerHTML = `<div class="status-err">${esc(err.message)}</div>`; }
+});
+
+/* ---------- background jobs ---------- */
+const seen = new Set(), dismissed = new Set();
+let jobsLoaded = false, jobTimer;
+async function startJob(path, json) {
+  try {
+    const job = await api(path, { method: "POST", json });
+    dismissed.delete(job.id);
+    pollJobs();
+  } catch (e) { toast(e.message, true); }
+}
+async function pollJobs() {
+  clearTimeout(jobTimer);
+  let list = [];
+  try { list = (await api("/jobs")).jobs; } catch { /* service restarting */ }
+  for (const j of list) {
+    if (j.status === "running" || seen.has(j.id)) continue;
+    seen.add(j.id);
+    if (jobsLoaded) onJobFinished(j); else dismissed.add(j.id);
+  }
+  jobsLoaded = true;
+  renderJobs(list);
+  jobTimer = setTimeout(pollJobs, list.some((j) => j.status === "running") ? 1000 : 5000);
+}
+function renderJobs(list) {
+  const visible = list.filter((j) => !dismissed.has(j.id)).slice(0, 4);
+  $("#jobs").innerHTML = visible.map((j) => {
+    const pct = j.progress == null ? null : Math.round(j.progress * 100);
+    const state = j.status === "running" ? (pct == null ? "" : `${pct}%`)
+      : j.status === "done" ? '<span class="status-ok">Done</span>' : '<span class="status-err">Failed</span>';
+    const msg = j.status === "error" ? j.error : j.status === "done" ? summarize(j) : j.message;
+    return `<div class="job">
+      <div class="job-head"><span>${esc(j.title)}</span><span>${state}${j.status !== "running" ? ` <button class="x" data-dismiss="${esc(j.id)}" aria-label="Dismiss">×</button>` : ""}</span></div>
+      ${j.status === "running" ? `<div class="bar ${pct == null ? "indeterminate" : ""}"><div style="width:${pct ?? 0}%"></div></div>` : ""}
+      <div class="job-msg" title="${esc(msg)}">${esc(msg || "Working…")}</div>
+    </div>`;
+  }).join("");
+}
+function summarize(j) {
+  if (!j.result || typeof j.result !== "object") return "";
+  const entries = Object.entries(j.result).filter(([k]) => k !== "model");
+  return entries.length ? entries.map(([k, v]) => `${v} ${k}`).join(", ") : "No changes";
+}
+$("#jobs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-dismiss]");
+  if (b) { dismissed.add(b.dataset.dismiss); pollJobs(); }
+});
+function onJobFinished(j) {
+  if (j.status === "error") toast(`${j.title} failed: ${j.error}`, true);
+  else toast(`${j.title}: done`);
+  setTimeout(() => { dismissed.add(j.id); pollJobs(); }, 15000);
+  loadStatus();
+  if (currentTab() === "models") loadModels();
+  if (currentTab() === "docs") loadDocs();
+}
+
+/* ---------- boot ---------- */
+loadStatus();
+showTab(["docs", "models", "retrieval"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "docs");
+pollJobs();
+setInterval(loadStatus, 15000);
+setInterval(() => { if (currentTab() === "docs" && !document.hidden) loadDocs(); }, 15000);
+</script>
+</body>
+</html>

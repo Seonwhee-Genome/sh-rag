@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list", help="list indexed documents")
 
+    p_emb = sub.add_parser("embedding", help="switch the embedding model (re-embeds into its own index)")
+    p_emb.add_argument("model")
+
     p_rm = sub.add_parser("remove", help="remove a document by doc_id or source path")
     p_rm.add_argument("key")
     p_rm.add_argument("--keep-file", action="store_true")
@@ -67,6 +70,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "list":
         for d in ingestor.list_docs():
             print(f"{d.get('doc_id')}  {d.get('chunks', '?'):>5} chunks  {d.get('source')}")
+        return 0
+
+    if args.cmd == "embedding":
+        def report(msg, frac=None):
+            print(f"  {msg}" + (f" ({frac:.0%})" if frac is not None else ""), flush=True)
+
+        results = ingestor.switch_embedding(args.model, on_status=report)
+        print(json.dumps(dict(Counter(r.status for r in results))))
+        print(f"active embedding model: {ingestor.index.embed_model} (collection {ingestor.index.collection})")
         return 0
 
     if args.cmd == "remove":

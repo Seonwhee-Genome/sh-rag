@@ -59,11 +59,12 @@ if [ "$SKIP_PULL" = 0 ]; then
   done
 fi
 
-mkdir -p "$DOCS_PATH"
+mkdir -p "$DOCS_PATH" data/config
 "${COMPOSE[@]}" up -d --build
 
 cat <<EOF
 
+Console   : http://localhost:$(cfg INGEST_PORT 8001)   (documents, models, settings)
 OpenWebUI : http://localhost:$WEBUI_PORT   (pick a 'rag/...' model)
 Gateway   : http://localhost:$(cfg GATEWAY_PORT 8090)/v1
 Ingest API: http://localhost:$(cfg INGEST_PORT 8001)/docs

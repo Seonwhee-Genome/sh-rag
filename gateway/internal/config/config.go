@@ -35,6 +35,10 @@ type Config struct {
 	SystemPrompt    string
 	ShowSources     bool
 	LogLevel        slog.Level
+	// RuntimeSettingsPath points at the JSON file the ingest console writes
+	// (embedding model, top-k, threshold). Values there override the env
+	// defaults above. Empty disables it.
+	RuntimeSettingsPath string
 }
 
 // Load reads the configuration from the environment, applying defaults.
@@ -54,6 +58,8 @@ func Load() Config {
 		SystemPrompt:    env("RAG_SYSTEM_PROMPT", DefaultSystemPrompt),
 		ShowSources:     envBool("RAG_SHOW_SOURCES", true),
 		LogLevel:        parseLevel(env("LOG_LEVEL", "info")),
+
+		RuntimeSettingsPath: env("RUNTIME_SETTINGS_PATH", ""),
 	}
 	if !strings.Contains(c.SystemPrompt, "{{context}}") {
 		c.SystemPrompt += "\n\n<context>\n{{context}}\n</context>"

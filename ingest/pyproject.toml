@@ -27,5 +27,8 @@ sh-rag-ingest = "ingest.cli:main"
 [tool.setuptools.packages.find]
 include = ["ingest*"]
 
+[tool.setuptools.package-data]
+ingest = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

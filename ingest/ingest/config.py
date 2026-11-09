@@ -26,10 +26,22 @@ class Settings:
     scan_interval: int = 30
     host: str = "0.0.0.0"
     port: int = 8001
+    # Defaults for settings the console can change at runtime (see runtime.py).
+    top_k: int = 5
+    score_threshold: float = 0.35
+    runtime_path: Path | None = Path("data/config/settings.json")
+    # Display-only values for the console.
+    host_docs_path: str = ""
+    webui_url: str = "http://localhost:3000"
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
+            top_k=int(_env("RAG_TOP_K", str(cls.top_k))),
+            score_threshold=float(_env("RAG_SCORE_THRESHOLD", str(cls.score_threshold))),
+            runtime_path=Path(_env("RUNTIME_SETTINGS_PATH", str(cls.runtime_path))),
+            host_docs_path=_env("HOST_DOCS_PATH", ""),
+            webui_url=_env("WEBUI_URL", cls.webui_url),
             ollama_url=_env("OLLAMA_BASE_URL", cls.ollama_url).rstrip("/"),
             qdrant_url=_env("QDRANT_URL", cls.qdrant_url).rstrip("/"),
             qdrant_api_key=os.environ.get("QDRANT_API_KEY") or None,

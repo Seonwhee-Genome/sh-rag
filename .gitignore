@@ -1,6 +1,7 @@
 .env
 data/docs/*
 !data/docs/.gitkeep
+data/config/
 
 # Tests
 ingest/tests/
