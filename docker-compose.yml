@@ -1,0 +1,88 @@
+name: sh-rag
+
+# Default: Ollama runs natively on the host (best performance: Metal on macOS,
+# CUDA/ROCm on Windows) and containers reach it via host.docker.internal.
+# To run Ollama in Docker instead, use the "ollama" profile (see README).
+
+x-ollama-url: &ollama-url ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+x-host-gateway: &host-gateway
+  - "host.docker.internal:host-gateway"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:${QDRANT_VERSION:-v1.13.4}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  ingest:
+    build: ./ingest
+    restart: unless-stopped
+    depends_on: [qdrant]
+    extra_hosts: *host-gateway
+    environment:
+      OLLAMA_BASE_URL: *ollama-url
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-documents}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
+      SCAN_INTERVAL: ${SCAN_INTERVAL:-30}
+    ports:
+      - "127.0.0.1:${INGEST_PORT:-8001}:8001"
+    volumes:
+      - ${DOCS_PATH:-./data/docs}:/data/docs
+
+  gateway:
+    build: ./gateway
+    restart: unless-stopped
+    depends_on: [qdrant]
+    extra_hosts: *host-gateway
+    environment:
+      OLLAMA_BASE_URL: *ollama-url
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-documents}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-sh-rag-local-key}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      RAG_SCORE_THRESHOLD: ${RAG_SCORE_THRESHOLD:-0.35}
+      RAG_MAX_CONTEXT_CHARS: ${RAG_MAX_CONTEXT_CHARS:-12000}
+      RAG_SHOW_SOURCES: ${RAG_SHOW_SOURCES:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8090}:8080"
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPENWEBUI_VERSION:-v0.6.5}
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    extra_hosts: *host-gateway
+    environment:
+      # Plain Ollama models (no retrieval) stay available alongside rag/* models.
+      OLLAMA_BASE_URL: *ollama-url
+      # The Go gateway appears as an OpenAI-compatible connection serving rag/* models.
+      OPENAI_API_BASE_URL: http://gateway:8080/v1
+      OPENAI_API_KEY: ${GATEWAY_API_KEY:-sh-rag-local-key}
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-me-to-a-random-string}
+    ports:
+      - "127.0.0.1:${WEBUI_PORT:-3000}:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:${OLLAMA_VERSION:-0.6.5}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  qdrant_data:
+  open_webui_data:
+  ollama_data:

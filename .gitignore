@@ -1,0 +1,23 @@
+.env
+data/docs/*
+!data/docs/.gitkeep
+
+# Tests
+ingest/tests/
+gateway/**/*_test.go
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Go
+/gateway/bin/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

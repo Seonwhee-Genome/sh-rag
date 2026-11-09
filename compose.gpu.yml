@@ -1,0 +1,11 @@
+# NVIDIA GPU for Ollama-in-Docker (Windows with WSL2, or Linux).
+# Not needed (and not supported) on macOS: run Ollama natively there.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
