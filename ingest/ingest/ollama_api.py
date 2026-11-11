@@ -47,6 +47,14 @@ class PullTracker:
         total = sum(self.total.values())
         return event.get("status", ""), (sum(self.done.values()) / total if total else None)
 
+    @property
+    def completed_bytes(self) -> int:
+        return sum(self.done.values())
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(self.total.values())
+
 
 class OllamaAPI:
     def __init__(self, base_url: str, timeout: float = 30.0):

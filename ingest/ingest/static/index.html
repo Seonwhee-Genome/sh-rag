@@ -54,6 +54,18 @@
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
   input:focus-visible, button:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .grow { flex: 1; min-width: 200px; }
+  .combo { position: relative; display: flex; }
+  .combo input { flex: 1; width: 100%; }
+  .combo-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(16, 24, 40, .14);
+    max-height: 280px; overflow-y: auto; z-index: 15; }
+  .combo-list[hidden] { display: none; }
+  .combo-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 10px;
+    border-radius: 6px; cursor: pointer; }
+  .combo-list li.hl { background: var(--accent-weak); }
+  .combo-list li .name { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  .combo-list li mark { background: none; color: var(--accent); font-weight: 700; }
+  .combo-list li.empty-opt { cursor: default; color: var(--muted); font-size: 12.5px; }
   .btn { font: inherit; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text);
     padding: 7px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; text-decoration: none; }
   .btn:hover { border-color: var(--accent); }
@@ -108,6 +120,13 @@
   .job-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
   .job-msg { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .job .x { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+  .job-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .job-foot .stats { font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job-foot .btns { display: flex; gap: 6px; flex-shrink: 0; }
+  .status-cancel { color: var(--muted); }
+  .pulls { display: grid; gap: 8px; margin-top: 14px; }
+  .pulls:empty { display: none; }
+  .pulls .job { box-shadow: none; background: var(--bg); }
   .toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px;
     background: var(--text); color: var(--bg); font-weight: 600; z-index: 20; max-width: calc(100vw - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.2); }
   .toast.err { background: var(--err); color: #fff; }
@@ -172,8 +191,9 @@
         so switching back is quick.</p>
       <div class="active-model"><span class="muted">Active</span> <code id="active-embed">—</code></div>
       <div class="row">
-        <input type="text" class="grow" id="embed-input" list="embed-suggest" placeholder="Embedding model, e.g. bge-m3" autocomplete="off">
-        <datalist id="embed-suggest"></datalist>
+        <div class="combo grow">
+          <input type="text" id="embed-input" placeholder="Embedding model, e.g. bge-m3" autocomplete="off" spellcheck="false">
+        </div>
         <button class="btn primary" id="embed-btn">Switch</button>
       </div>
     </div>
@@ -183,11 +203,14 @@
       <p class="muted small" style="margin:0">Every chat model installed here shows up in OpenWebUI as <code>rag/&lt;name&gt;</code>
         (with your documents) and as plain <code>&lt;name&gt;</code> (without). Choose one in OpenWebUI's model selector.</p>
       <div class="row">
-        <input type="text" class="grow" id="pull-input" list="chat-suggest" placeholder="Model to download, e.g. qwen2.5:7b" autocomplete="off">
-        <datalist id="chat-suggest"></datalist>
+        <div class="combo grow">
+          <input type="text" id="pull-input" placeholder="Model to download, e.g. qwen2.5:7b" autocomplete="off" spellcheck="false">
+        </div>
         <button class="btn primary" id="pull-btn">Download</button>
         <a class="small" href="https://ollama.com/library" target="_blank" rel="noopener">Browse library ↗</a>
       </div>
+      <!-- Running / cancelled downloads, with progress, cancel and resume -->
+      <div id="pulls" class="pulls" aria-live="polite"></div>
       <div class="table-wrap" style="margin-top:16px">
         <table>
           <thead><tr><th>Model</th><th>Type</th><th class="hide-sm">Parameters</th><th class="num">Size</th><th></th></tr></thead>
@@ -274,6 +297,7 @@ function showTab(name) {
   if (name === "docs") loadDocs();
   if (name === "models") loadModels();
   if (name === "retrieval") loadSettings();
+  if (jobsLoaded) pollJobs(); // move download cards between the Models tab and the corner panel
 }
 document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 const currentTab = () => document.querySelector("nav button.active").dataset.tab;
@@ -365,8 +389,10 @@ async function loadModels() {
   try {
     const data = await api("/models");
     models = data.models;
+    activeEmbed = data.active_embed_model;
     $("#active-embed").textContent = data.active_embed_model;
     renderModels(data.active_embed_model);
+    embedCombo.refresh(); pullCombo.refresh();
   } catch (e) {
     models = [];
     $("#model-rows").innerHTML = "";
@@ -389,11 +415,123 @@ function renderModels(active) {
   }).join("");
   $("#model-empty").hidden = models.length > 0;
   $("#model-empty").textContent = "No models installed.";
-  const installed = new Set(models.map((m) => norm(m.name)));
-  const embedOpts = [...new Set([...models.filter((m) => m.kind === "embedding").map((m) => m.name), ...EMBED_SUGGESTIONS])];
-  $("#embed-suggest").innerHTML = embedOpts.map((n) => `<option value="${esc(n)}">`).join("");
-  $("#chat-suggest").innerHTML = CHAT_SUGGESTIONS.filter((n) => !installed.has(norm(n))).map((n) => `<option value="${esc(n)}">`).join("");
 }
+
+/* ---------- autocomplete ---------- */
+// Accessible combobox: opens on focus, filters as you type (prefix matches first),
+// ↑/↓ to move, Enter or Tab to accept, Esc to close.
+let comboSeq = 0;
+function combobox(input, getOptions) {
+  const list = document.createElement("ul");
+  list.className = "combo-list"; list.id = `combo-${++comboSeq}`; list.setAttribute("role", "listbox"); list.hidden = true;
+  input.after(list);
+  input.setAttribute("role", "combobox"); input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-controls", list.id); input.setAttribute("aria-expanded", "false");
+  let items = [], hl = -1;
+
+  const rank = (name, q) => {
+    const n = name.toLowerCase(), i = n.indexOf(q);
+    if (!q) return 0;
+    if (i < 0) return -1;
+    return i === 0 ? 3 : /[\/:._-]/.test(n[i - 1]) ? 2 : 1;
+  };
+  const mark = (name, q) => {
+    const i = q ? name.toLowerCase().indexOf(q) : -1;
+    return i < 0 ? esc(name) : esc(name.slice(0, i)) + `<mark>${esc(name.slice(i, i + q.length))}</mark>` + esc(name.slice(i + q.length));
+  };
+  function setHl(i) {
+    hl = i;
+    [...list.children].forEach((li, j) => { li.classList.toggle("hl", j === i); li.setAttribute("aria-selected", j === i); });
+    const li = list.children[i];
+    if (li && items.length) { input.setAttribute("aria-activedescendant", li.id); li.scrollIntoView({ block: "nearest" }); }
+    else input.removeAttribute("aria-activedescendant");
+  }
+  function open() {
+    const q = input.value.trim().toLowerCase();
+    // getOptions(q) returns an array, or {options, loading} while a lookup is in flight.
+    const res = getOptions(q), options = Array.isArray(res) ? res : res.options, loading = !Array.isArray(res) && res.loading;
+    items = options
+      .map((o, idx) => ({ ...o, r: rank(o.value, q), idx }))
+      .filter((o) => o.r >= 0)
+      .sort((a, b) => b.r - a.r || a.idx - b.idx);
+    const empty = loading ? "Searching the Ollama library…" : q ? "No suggestions. Press Enter to use what you typed." : "No suggestions.";
+    list.innerHTML = items.map((o, i) => `<li role="option" id="${list.id}-${i}" data-i="${i}" title="${esc(o.title || "")}"><span class="name">${mark(o.value, q)}</span>` +
+          (o.note ? `<span class="tag ${esc(o.kind || "")}">${esc(o.note)}</span>` : "") + `</li>`).join("") +
+      (items.length && !loading ? "" : `<li class="empty-opt">${items.length ? "Searching for more…" : empty}</li>`);
+    list.hidden = false; input.setAttribute("aria-expanded", "true");
+    setHl(q && items.length ? 0 : -1);
+  }
+  function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); setHl(-1); }
+  function accept(i) { input.value = items[i].value; close(); input.focus(); }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("input", open);
+  input.addEventListener("blur", close);
+  list.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the input
+  list.addEventListener("click", (e) => { const li = e.target.closest("li[data-i]"); if (li) accept(+li.dataset.i); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (list.hidden) return open();
+      if (!items.length) return;
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      setHl(hl < 0 ? (d > 0 ? 0 : items.length - 1) : (hl + d + items.length) % items.length);
+    } else if (e.key === "Escape" && !list.hidden) {
+      e.preventDefault(); close();
+    } else if ((e.key === "Enter" || e.key === "Tab") && !list.hidden && hl >= 0) {
+      // First Enter fills the box; a second Enter (list closed) submits.
+      if (e.key === "Enter" && items[hl].value === input.value.trim()) return close();
+      e.preventDefault(); accept(hl);
+    } else if (e.key === "Enter") {
+      close();
+    }
+  });
+  return { refresh: () => { if (!list.hidden) open(); } };
+}
+
+let activeEmbed = "";
+const isInstalled = (name) => models.some((m) => sameModel(m.name, name));
+
+// Live suggestions from the public Ollama library via /models/suggest (the server
+// caches ollama.com searches). Lookups are debounced per typed name; the part
+// after ":" is matched client-side against the model's size tags.
+const library = { cache: new Map(), timer: null };
+function librarySearch(q, kind) {
+  const base = q.split(":")[0].trim().toLowerCase(), key = `${kind}|${base}`;
+  if (library.cache.has(key)) return library.cache.get(key);
+  clearTimeout(library.timer);
+  library.timer = setTimeout(async () => {
+    let models = [];
+    try { models = (await api(`/models/suggest?q=${encodeURIComponent(base)}&kind=${kind}`)).models; }
+    catch { /* offline or old server: fall back to the built-in lists */ }
+    library.cache.set(key, models);
+    embedCombo.refresh(); pullCombo.refresh();
+  }, 250);
+  return null; // still loading
+}
+function libraryOptions(q, kind, fallback, skip) {
+  const base = q.split(":")[0].trim().toLowerCase();
+  const found = librarySearch(q, kind);
+  const names = found === null || !found.length ? fallback.map((n) => ({ name: n, sizes: [], description: "" })) : found;
+  const options = [];
+  for (const m of names) {
+    if (skip(m.name)) continue;
+    const note = m.capabilities?.length ? m.capabilities.filter((c) => c !== "embedding").join(", ") : "";
+    options.push({ value: m.name, note: note || "library", kind: "", title: m.description });
+    // Offer the size tags once the full name is typed, or when the user starts a ":tag".
+    if (m.name === base || q.includes(":")) {
+      for (const s of m.sizes) if (!skip(`${m.name}:${s}`)) options.push({ value: `${m.name}:${s}`, note: s, kind: "", title: m.description });
+    }
+  }
+  return { options, loading: found === null };
+}
+const embedCombo = combobox($("#embed-input"), (q) => {
+  const installed = models.filter((m) => m.kind === "embedding" && !sameModel(m.name, activeEmbed))
+    .map((m) => ({ value: m.name, note: "installed", kind: "active" }));
+  const lib = libraryOptions(q, "embedding", EMBED_SUGGESTIONS, (n) => isInstalled(n) || sameModel(n, activeEmbed));
+  return { options: [...installed, ...lib.options], loading: lib.loading };
+});
+const pullCombo = combobox($("#pull-input"), (q) => libraryOptions(q, "chat", CHAT_SUGGESTIONS, isInstalled));
 $("#model-rows").addEventListener("click", async (ev) => {
   const use = ev.target.closest("[data-use-embed]");
   if (use) return switchEmbedding(use.dataset.useEmbed);
@@ -409,13 +547,13 @@ $("#pull-btn").addEventListener("click", () => {
   if (!model) return $("#pull-input").focus();
   startJob("/models/pull", { model }); $("#pull-input").value = "";
 });
-$("#pull-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pull-btn").click(); });
+$("#pull-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.defaultPrevented) $("#pull-btn").click(); });
 $("#embed-btn").addEventListener("click", () => {
   const model = $("#embed-input").value.trim();
   if (!model) return $("#embed-input").focus();
   switchEmbedding(model);
 });
-$("#embed-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#embed-btn").click(); });
+$("#embed-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.defaultPrevented) $("#embed-btn").click(); });
 function switchEmbedding(model) {
   const msg = `Switch the embedding model to "${model}"?\n\nThe model is downloaded if needed and all documents are re-embedded ` +
     `in the background. Chat keeps using the current model until the new index is ready.`;
@@ -480,33 +618,86 @@ async function pollJobs() {
   renderJobs(list);
   jobTimer = setTimeout(pollJobs, list.some((j) => j.status === "running") ? 1000 : 5000);
 }
-function renderJobs(list) {
-  const visible = list.filter((j) => !dismissed.has(j.id)).slice(0, 4);
-  $("#jobs").innerHTML = visible.map((j) => {
-    const pct = j.progress == null ? null : Math.round(j.progress * 100);
-    const state = j.status === "running" ? (pct == null ? "" : `${pct}%`)
-      : j.status === "done" ? '<span class="status-ok">Done</span>' : '<span class="status-err">Failed</span>';
-    const msg = j.status === "error" ? j.error : j.status === "done" ? summarize(j) : j.message;
-    return `<div class="job">
-      <div class="job-head"><span>${esc(j.title)}</span><span>${state}${j.status !== "running" ? ` <button class="x" data-dismiss="${esc(j.id)}" aria-label="Dismiss">×</button>` : ""}</span></div>
-      ${j.status === "running" ? `<div class="bar ${pct == null ? "indeterminate" : ""}"><div style="width:${pct ?? 0}%"></div></div>` : ""}
-      <div class="job-msg" title="${esc(msg)}">${esc(msg || "Working…")}</div>
-    </div>`;
-  }).join("");
+// Download speed is derived client-side from successive polls (smoothed), so the
+// server only has to report bytes.
+const speedSamples = new Map(); // job id -> { t, bytes, rate }
+function pullStats(j) {
+  const d = j.detail || {};
+  if (!d.total) return "";
+  const now = performance.now(), prev = speedSamples.get(j.id);
+  let rate = prev ? prev.rate : 0;
+  if (prev && j.status === "running" && now - prev.t >= 500) {
+    const inst = Math.max(0, (d.completed - prev.bytes) / ((now - prev.t) / 1000));
+    rate = prev.rate ? prev.rate * 0.7 + inst * 0.3 : inst;
+  }
+  if (!prev || now - prev.t >= 500 || j.status !== "running") speedSamples.set(j.id, { t: now, bytes: d.completed, rate });
+  let s = `${d.completed ? fmtBytes(d.completed) : "0 B"} / ${fmtBytes(d.total)}`;
+  if (j.status === "running" && rate > 0) {
+    const left = (d.total - d.completed) / rate;
+    s += ` · ${fmtBytes(rate)}/s · ${left < 60 ? `${Math.ceil(left)} s` : left < 3600 ? `${Math.ceil(left / 60)} min` : `${(left / 3600).toFixed(1)} h`} left`;
+  }
+  return s;
 }
+function jobCard(j) {
+  const pct = j.progress == null ? null : Math.round(j.progress * 100);
+  const state = j.status === "running" ? (pct == null ? "" : `${pct}%`)
+    : j.status === "done" ? '<span class="status-ok">Done</span>'
+    : j.status === "cancelled" ? '<span class="status-cancel">Cancelled</span>' : '<span class="status-err">Failed</span>';
+  const msg = j.status === "error" ? j.error : j.status === "done" ? summarize(j) : j.message;
+  const canResume = j.status === "cancelled" || j.status === "error";
+  const resumeLabel = j.kind === "pull" ? "Resume" : "Retry";
+  const btns = [
+    j.status === "running" && !j.cancel_requested ? `<button class="btn sm" data-cancel="${esc(j.id)}">Cancel</button>` : "",
+    canResume && j.detail?.model ? `<button class="btn sm primary" data-resume="${esc(j.id)}" data-kind="${esc(j.kind)}" data-model="${esc(j.detail.model)}">${resumeLabel}</button>` : "",
+  ].join("");
+  const stats = j.kind === "pull" ? pullStats(j) : "";
+  return `<div class="job" data-job="${esc(j.id)}">
+    <div class="job-head"><span>${esc(j.title)}</span><span>${state}${j.status !== "running" ? ` <button class="x" data-dismiss="${esc(j.id)}" aria-label="Dismiss">×</button>` : ""}</span></div>
+    ${j.status === "running" || (j.status === "cancelled" && pct != null) ? `<div class="bar ${pct == null ? "indeterminate" : ""}"><div style="width:${pct ?? 0}%"></div></div>` : ""}
+    <div class="job-msg" title="${esc(msg)}">${esc(msg || "Working…")}</div>
+    ${stats || btns ? `<div class="job-foot"><span class="stats">${esc(stats)}</span><span class="btns">${btns}</span></div>` : ""}
+  </div>`;
+}
+function renderJobs(list) {
+  const visible = list.filter((j) => !dismissed.has(j.id));
+  // Downloads get a full card in the Models tab; the corner panel shows the rest
+  // there, and everything elsewhere.
+  const onModels = currentTab() === "models";
+  const pulls = visible.filter((j) => j.kind === "pull");
+  $("#pulls").innerHTML = pulls.map(jobCard).join("");
+  $("#jobs").innerHTML = visible.filter((j) => !(onModels && j.kind === "pull")).slice(0, 4).map(jobCard).join("");
+  for (const id of speedSamples.keys()) if (!list.some((j) => j.id === id)) speedSamples.delete(id);
+}
+async function jobAction(ev) {
+  const cancel = ev.target.closest("[data-cancel]");
+  if (cancel) {
+    cancel.disabled = true;
+    try { await api(`/jobs/${encodeURIComponent(cancel.dataset.cancel)}/cancel`, { method: "POST" }); pollJobs(); }
+    catch (e) { toast(e.message, true); cancel.disabled = false; }
+    return;
+  }
+  const resume = ev.target.closest("[data-resume]");
+  if (resume) {
+    dismissed.add(resume.dataset.resume);
+    const path = resume.dataset.kind === "pull" ? "/models/pull" : "/embedding";
+    return startJob(path, { model: resume.dataset.model });
+  }
+  const b = ev.target.closest("[data-dismiss]");
+  if (b) { dismissed.add(b.dataset.dismiss); pollJobs(); }
+}
+$("#pulls").addEventListener("click", jobAction);
 function summarize(j) {
   if (!j.result || typeof j.result !== "object") return "";
   const entries = Object.entries(j.result).filter(([k]) => k !== "model");
   return entries.length ? entries.map(([k, v]) => `${v} ${k}`).join(", ") : "No changes";
 }
-$("#jobs").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-dismiss]");
-  if (b) { dismissed.add(b.dataset.dismiss); pollJobs(); }
-});
+$("#jobs").addEventListener("click", jobAction);
 function onJobFinished(j) {
   if (j.status === "error") toast(`${j.title} failed: ${j.error}`, true);
+  else if (j.status === "cancelled") toast(`${j.title}: cancelled`);
   else toast(`${j.title}: done`);
-  setTimeout(() => { dismissed.add(j.id); pollJobs(); }, 15000);
+  // Finished jobs fade out on their own; cancelled ones stay so they can be resumed.
+  if (j.status !== "cancelled") setTimeout(() => { dismissed.add(j.id); pollJobs(); }, 15000);
   loadStatus();
   if (currentTab() === "models") loadModels();
   if (currentTab() === "docs") loadDocs();

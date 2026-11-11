@@ -70,7 +70,7 @@ A small web console for everything outside of chatting:
 | Tab | What you can do |
 |---|---|
 | **Documents** | Drag and drop files to embed them. Search the list of indexed documents and delete them. **Sync folder** picks up changes now instead of on the next scan. **Re-embed all** rebuilds every document from scratch. |
-| **Models** | Download Ollama models with a progress bar, delete them, and **switch the embedding model**. |
+| **Models** | Download Ollama models (suggestions come from the public library at ollama.com as you type, with chat and embedding models kept apart; offline, a built-in list is used), delete them, and **switch the embedding model**. Each download shows a progress bar with bytes, speed and time left, and can be **cancelled and resumed**: Ollama keeps the layers already downloaded, so resuming continues where it stopped. |
 | **Retrieval** | Change the number of passages per question and the minimum similarity, then **test a search** to see exactly what a question retrieves. |
 
 The status bar shows whether Ollama and Qdrant are reachable and which embedding model is active.
@@ -92,6 +92,7 @@ Everything in the console is also available as an API (interactive docs at http:
 | Remove | Delete the file, or `curl -X DELETE http://localhost:8001/documents/<doc_id or source path>` |
 | Re-index | `scripts/reindex.ps1` / `scripts/reindex.sh` (`--force` re-embeds everything) |
 | Switch embedding model | `docker compose exec ingest python -m ingest embedding nomic-embed-text` |
+| Download a model | `curl -d '{"model":"qwen2.5:7b"}' -H "Content-Type: application/json" http://localhost:8001/models/pull` → returns a job; follow it at `/jobs/<id>`, stop it with `POST /jobs/<id>/cancel` |
 | Inspect retrieval | `curl -H "Authorization: Bearer sh-rag-local-key" -d '{"query":"...","top_k":5}' http://localhost:8090/v1/retrieve` |
 
 Uploaded files are saved under `data/docs/uploads/`, so they survive a re-index.

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from ingest.config import Settings
 from ingest.jobs import JobManager
+from ingest.library import Library
 from ingest.ollama_api import OllamaAPI, OllamaError, PullTracker, same_model
 from ingest.pipeline import Ingestor
 
@@ -28,6 +29,7 @@ settings = Settings.from_env()
 ingestor = Ingestor(settings)
 ollama = OllamaAPI(settings.ollama_url)
 jobs = JobManager()
+library = Library()
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -164,16 +166,32 @@ def list_models() -> dict:
     return {"models": models, "active_embed_model": ingestor.index.embed_model}
 
 
+@app.get("/models/suggest")
+def suggest_models(q: str = "", kind: str | None = None) -> dict:
+    """Autocomplete candidates from the public Ollama library. An empty query
+    returns the most popular models. Degrades to an empty list when offline."""
+    if kind not in (None, "chat", "embedding"):
+        raise HTTPException(422, "kind must be 'chat' or 'embedding'")
+    return library.search(q, kind)
+
+
 @app.post("/models/pull")
 def pull_model(body: ModelBody) -> dict:
     model = body.model.strip()
 
     def run(job):
         tracker = PullTracker()
-        ollama.pull(model, lambda ev: job.report(*tracker.update(ev)))
+
+        def on_event(ev):
+            msg, frac = tracker.update(ev)
+            job.report(msg, frac, completed=tracker.completed_bytes, total=tracker.total_bytes)
+
+        # Ollama keeps partially downloaded layers, so a cancelled pull resumes
+        # where it stopped when the same model is pulled again.
+        ollama.pull(model, on_event)
         return {"model": model}
 
-    return asdict(jobs.start("pull", f"pull:{model}", f"Pull {model}", run))
+    return asdict(jobs.start("pull", f"pull:{model}", f"Pull {model}", run, detail={"model": model}))
 
 
 @app.delete("/models/{name:path}")
@@ -202,7 +220,8 @@ def switch_embedding(body: ModelBody) -> dict:
         results = ingestor.switch_embedding(model, on_status=job.report)
         return dict(Counter(r.status for r in results))
 
-    return asdict(jobs.start("embedding", f"embedding:{model}", f"Switch embedding to {model}", run))
+    return asdict(jobs.start("embedding", f"embedding:{model}", f"Switch embedding to {model}", run,
+                             detail={"model": model}))
 
 
 # --- retrieval settings -----------------------------------------------------
@@ -241,4 +260,17 @@ def get_job(job_id: str) -> dict:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
+    return asdict(job)
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    """Ask a running job to stop. It ends at its next progress event; a cancelled
+    pull keeps what was downloaded and resumes when started again."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    if job.status != "running":
+        raise HTTPException(409, f"job is already {job.status}")
+    job.cancel()
     return asdict(job)
