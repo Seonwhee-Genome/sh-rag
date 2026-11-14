@@ -266,11 +266,21 @@ const sameModel = (a, b) => norm(a) === norm(b);
 const fmtBytes = (n) => { if (!n) return "—"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n.toFixed(i > 1 ? 1 : 0)} ${u[i]}`; };
 const fmtTime = (iso) => { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString(); };
 
+// Optional API key (INGEST_API_KEY on the server). Asked for once on the first 401, then remembered.
+const KEY_STORE = "shrag.apiKey";
+let apiKey = localStorage.getItem(KEY_STORE) || "";
 async function api(path, opts = {}) {
-  const init = { method: opts.method || "GET" };
-  if (opts.json !== undefined) { init.body = JSON.stringify(opts.json); init.headers = { "Content-Type": "application/json" }; }
+  const init = { method: opts.method || "GET", headers: {} };
+  if (opts.json !== undefined) { init.body = JSON.stringify(opts.json); init.headers["Content-Type"] = "application/json"; }
   else if (opts.body) init.body = opts.body;
+  if (apiKey) init.headers["Authorization"] = `Bearer ${apiKey}`;
   const res = await fetch(path, init);
+  if (res.status === 401 && !opts.retried) {
+    const entered = prompt("This console is protected. Enter the API key (INGEST_API_KEY in the server's .env):", apiKey);
+    if (entered === null) throw new Error("API key required");
+    apiKey = entered.trim(); localStorage.setItem(KEY_STORE, apiKey);
+    return api(path, { ...opts, retried: true });
+  }
   const isJson = (res.headers.get("content-type") || "").includes("json");
   const data = isJson ? await res.json() : await res.text();
   if (!res.ok) {

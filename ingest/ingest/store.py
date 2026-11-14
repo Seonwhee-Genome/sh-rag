@@ -72,6 +72,37 @@ class QdrantStore:
         )
         return points[0].payload.get("content_hash") if points else None
 
+    def list_chunks(self, doc_id: str, with_text: bool = True) -> list[dict[str, Any]]:
+        """Every chunk of one document, ordered by chunk_index."""
+        if not self.client.collection_exists(self.collection):
+            return []
+        fields = ["chunk_index", "page"] + (["text"] if with_text else [])
+        chunks: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                self.collection, scroll_filter=_match("doc_id", doc_id), limit=256, offset=offset, with_payload=fields
+            )
+            chunks.extend(p.payload for p in points)
+            if offset is None:
+                break
+        return sorted(chunks, key=lambda c: c.get("chunk_index", 0))
+
+    def count(self) -> int:
+        """Number of stored vectors (chunks) in this collection, 0 if it does not exist."""
+        if not self.client.collection_exists(self.collection):
+            return 0
+        return self.client.count(self.collection, exact=True).count
+
+    def list_collections(self, prefix: str) -> list[dict[str, Any]]:
+        """All collections whose name starts with `prefix` (one per embedding model)."""
+        out = []
+        for c in self.client.get_collections().collections:
+            if c.name.startswith(prefix):
+                info = self.client.get_collection(c.name)
+                out.append({"collection": c.name, "points": info.points_count or 0})
+        return sorted(out, key=lambda c: c["collection"])
+
     def list_docs(self) -> list[dict[str, Any]]:
         """One entry per document (read from each document's first chunk)."""
         if not self.client.collection_exists(self.collection):

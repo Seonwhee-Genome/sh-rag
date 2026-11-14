@@ -5,7 +5,7 @@ A local, private retrieval-augmented chat stack that runs the same on **Windows*
 - **OpenWebUI** is the chat interface.
 - **Ollama** runs the chat and embedding models.
 - **Go gateway** (`gateway/`) is the hot path for every chat message. It is an OpenAI-compatible API that embeds the question, searches Qdrant, injects the best passages into the prompt, and streams the answer from Ollama, with a sources list. It uses only the standard library and a pooled HTTP transport, and streams in a single pass with no buffering.
-- **Python ingest** (`ingest/`) handles document processing, where Python's parsing ecosystem shines. It parses PDF, DOCX, HTML, Markdown, text and code, chunks and embeds them, and stores them in Qdrant. It watches a folder, accepts uploads, and serves the **web console** for documents, models and retrieval settings.
+- **Python ingest** (`ingest/`) handles document processing, where Python's parsing ecosystem shines. It parses PDF, DOCX, HTML, Markdown, text and code, chunks and embeds them, and stores them in Qdrant. It watches a folder, accepts uploads, serves the **web console** for documents, models and retrieval settings, and stores the **board and conversations** of native clients.
 - **Qdrant** is the vector database.
 
 ```mermaid
@@ -97,6 +97,27 @@ Everything in the console is also available as an API (interactive docs at http:
 
 Uploaded files are saved under `data/docs/uploads/`, so they survive a re-index.
 
+## Native clients (iOS app and others)
+
+The stack has a documented, versioned API for clients such as **sh-rag-client** for iOS:
+**[docs/client-api.md](docs/client-api.md)**. In short:
+
+- **Chat** uses the gateway's OpenAI-compatible endpoint with a small `sh_rag` extension:
+  `"sh_rag": {"sources": "json"}` returns the retrieved passages as structured data (document id,
+  title, page, score, text) in the first stream event, before the first token, instead of a markdown
+  footer. `retrieve`, `top_k` and `score_threshold` can be set per request. `GET /v1/models` carries
+  parameter size and quantization for each model.
+- **Dashboard** data comes from `GET /stats` (totals, by type, indexes), and `GET /events` is a
+  Server-Sent Events feed of job progress and board or conversation changes, so clients do not poll.
+  `GET /documents/{key}` returns a document's passages and `GET /files/{source}` the original file.
+- **Board** (kanban) and **conversations** are stored on the server (`/board`, `/conversations`),
+  in `data/workspace/workspace.db`, so cards and chat history are shared between devices and
+  survive reinstalls.
+- **Discovery**: `GET /healthz` (gateway) and `GET /status` (ingest) list the supported `features`.
+
+To reach the stack from a phone, set `BIND_ADDRESS=0.0.0.0` in `.env` together with a new
+`GATEWAY_API_KEY` and an `INGEST_API_KEY`. The console asks for the ingest key once and remembers it.
+
 ## Configuration
 
 All settings are in `.env`. See [.env.example](.env.example) for the full list.
@@ -111,10 +132,13 @@ All settings are in `.env`. See [.env.example](.env.example) for the full list.
 | `QDRANT_COLLECTION` | `documents` | Collection name prefix; the model name is appended (e.g. `documents_bge_m3`). |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | In characters. Re-index after changing them. |
 | `RAG_SHOW_SOURCES` | `true` | Appends a **Sources** list to answers. |
-| `GATEWAY_API_KEY` | `sh-rag-local-key` | Shared secret between OpenWebUI and the gateway. |
-| `WEBUI_PORT`, `GATEWAY_PORT`, `INGEST_PORT`, `QDRANT_PORT` | 3000, 8090, 8001, 6333 | Host ports, all bound to `127.0.0.1`. |
+| `GATEWAY_API_KEY` | `sh-rag-local-key` | Shared secret between OpenWebUI (and native clients) and the gateway. |
+| `INGEST_API_KEY` | empty | Optional bearer token for the ingest API and console. Empty keeps it open (localhost only). |
+| `BIND_ADDRESS` | `127.0.0.1` | Interface the gateway, ingest API and OpenWebUI are published on. `0.0.0.0` makes them reachable from other devices. |
+| `WEBUI_PORT`, `GATEWAY_PORT`, `INGEST_PORT`, `QDRANT_PORT` | 3000, 8090, 8001, 6333 | Host ports. Qdrant is always bound to `127.0.0.1`. |
+| `WORKSPACE_PATH` | `./data/workspace` | Host folder for the board and conversations database. |
 
-All ports are bound to localhost only. Before exposing anything on a network, change `GATEWAY_API_KEY` and `WEBUI_SECRET_KEY`.
+By default everything is bound to localhost. Before setting `BIND_ADDRESS=0.0.0.0`, change `GATEWAY_API_KEY` and `WEBUI_SECRET_KEY` and set `INGEST_API_KEY`.
 
 ## How a question is answered
 
@@ -147,8 +171,10 @@ Layout:
 ```
 gateway/   Go: cmd/gateway (main), internal/{config,ollama,qdrant,rag,server}
 gateway/internal/settings  runtime settings shared with the console
-ingest/    Python: ingest/{loaders,chunker,embedder,store,pipeline,runtime,ollama_api,jobs,api,cli}.py
+ingest/    Python: ingest/{loaders,chunker,embedder,store,pipeline,runtime,ollama_api,library,jobs,api,cli}.py
+ingest/ingest/{workspace,workspace_api,events}.py   board + conversations store, their routes, the SSE change feed
 ingest/ingest/static/index.html   the web console (no build step, no external assets)
+docs/client-api.md   the API contract for native clients
 scripts/   start / stop / reindex for PowerShell and bash
 docker-compose.yml, compose.gpu.yml, .env.example
 ```
@@ -158,6 +184,7 @@ docker-compose.yml, compose.gpu.yml, .env.example
 - **No `rag/*` models in OpenWebUI.** OpenWebUI saves its connection settings in its own database on first start. After that, the `OPENAI_API_*` env vars are ignored. Check *Admin Panel → Settings → Connections*: the OpenAI API entry should be `http://gateway:8080/v1` with your `GATEWAY_API_KEY`. Also check `docker compose logs gateway`.
 - **"Ollama is not reachable".** Start the Ollama app (look for the tray or menu bar icon), or use the Docker Ollama option. On Docker Desktop, `host.docker.internal` reaches the host's `localhost:11434`. With Colima, set `OLLAMA_BASE_URL=http://host.lima.internal:11434`.
 - **Port already in use.** Change the matching `*_PORT` in `.env`.
+- **The console asks for an API key.** `INGEST_API_KEY` is set in `.env`; enter that value. It is remembered in the browser. Native clients send it as a Bearer token.
 - **Embedding model switch failed.** The job card in the console shows the reason. A common one is that the model can't produce embeddings (it's a chat model). The previous model stays active, so nothing breaks.
 - **Index looks corrupted.** Run `scripts/reindex.ps1 -Recreate` / `scripts/reindex.sh --recreate` to rebuild the active model's collection from the documents folder.
 - **Scanned PDFs produce no text.** These are images, not text. OCR them first (e.g. with `ocrmypdf`).

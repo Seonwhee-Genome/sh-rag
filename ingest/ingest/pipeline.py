@@ -44,6 +44,12 @@ def doc_id_for(source: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, source))
 
 
+def _doc_type(source: str) -> str:
+    """Lower-cased extension without the dot, or 'other' (matches the API contract)."""
+    ext = Path(source).suffix.lower().lstrip(".")
+    return ext or "other"
+
+
 class Index:
     """One embedding model and the Qdrant collection holding its vectors."""
 
@@ -259,6 +265,73 @@ class Ingestor:
         idx = self.index
         with idx.lock:
             return sorted(idx.store.list_docs(), key=lambda d: d.get("source", ""))
+
+    def find_doc(self, key: str) -> dict | None:
+        """One document by doc_id or source path, or None."""
+        return next((d for d in self.list_docs() if key in (d.get("doc_id"), d.get("source"))), None)
+
+    def file_for(self, source: str) -> Path | None:
+        """The original file for a source path, if it is still inside the docs folder."""
+        if not source:
+            return None
+        path = (self.docs_dir / source).resolve()
+        if not path.is_relative_to(self.docs_dir.resolve()):
+            raise PermissionError(f"'{source}' is outside the documents folder")
+        return path if path.is_file() else None
+
+    def get_doc(self, key: str, include_text: bool = True) -> dict | None:
+        """Document detail for the client API: metadata, file info and ordered passages."""
+        doc = self.find_doc(key)
+        if doc is None:
+            return None
+        idx = self.index
+        with idx.lock:
+            chunks = idx.store.list_chunks(doc["doc_id"], with_text=include_text)
+        source = doc.get("source", "")
+        try:
+            path = self.file_for(source)
+        except PermissionError:
+            path = None
+        pages = [c["page"] for c in chunks if c.get("page")]
+        passages = []
+        for c in chunks:
+            passage = {"index": c.get("chunk_index", len(passages)), "page": c.get("page")}
+            if include_text:
+                passage["text"] = c.get("text", "")
+            passages.append(passage)
+        return {
+            **doc,
+            "type": _doc_type(source),
+            "size_bytes": path.stat().st_size if path else None,
+            "file_url": f"/files/{source}" if path else None,
+            "pages": max(pages) if pages else None,
+            "passages": passages,
+        }
+
+    def stats(self) -> dict:
+        """Aggregates for dashboards: totals, by file type, and the known indexes."""
+        docs = self.list_docs()
+        by_type: dict[str, dict] = {}
+        for d in docs:
+            t = _doc_type(d.get("source", ""))
+            entry = by_type.setdefault(t, {"type": t, "documents": 0, "chunks": 0})
+            entry["documents"] += 1
+            entry["chunks"] += int(d.get("chunks") or 0)
+        idx = self.index
+        try:
+            indexes = idx.store.list_collections(self.settings.collection + "_")
+        except Exception as exc:  # Qdrant down: the rest of the stats are still useful
+            log.warning("could not list collections: %s", exc)
+            indexes = []
+        for entry in indexes:
+            entry["active"] = entry["collection"] == idx.collection
+        return {
+            "documents": len(docs),
+            "chunks": sum(int(d.get("chunks") or 0) for d in docs),
+            "by_type": sorted(by_type.values(), key=lambda e: (-e["documents"], e["type"])),
+            "indexes": indexes,
+            "embed_model": idx.embed_model,
+        }
 
     def remove(self, key: str, delete_file: bool = True) -> IngestResult | None:
         """Remove a document by doc_id or source path. Returns None if unknown.

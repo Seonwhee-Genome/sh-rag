@@ -59,7 +59,7 @@ if [ "$SKIP_PULL" = 0 ]; then
   done
 fi
 
-mkdir -p "$DOCS_PATH" data/config
+mkdir -p "$DOCS_PATH" data/config "$(cfg WORKSPACE_PATH ./data/workspace)"
 "${COMPOSE[@]}" up -d --build
 
 cat <<EOF

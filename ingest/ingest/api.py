@@ -3,23 +3,29 @@ plus the background folder watcher."""
 
 from __future__ import annotations
 
+import hmac
 import logging
+import mimetypes
 import threading
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ingest.config import Settings
+from ingest.events import ChangeFeed, event_stream, parse_topics
 from ingest.jobs import JobManager
 from ingest.library import Library
 from ingest.ollama_api import OllamaAPI, OllamaError, PullTracker, same_model
 from ingest.pipeline import Ingestor
+from ingest.workspace import Workspace
+from ingest.workspace_api import make_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # per-request logs drown the useful ones
@@ -30,7 +36,16 @@ ingestor = Ingestor(settings)
 ollama = OllamaAPI(settings.ollama_url)
 jobs = JobManager()
 library = Library()
+feed = ChangeFeed()
+workspace = Workspace(settings.workspace_db, on_change=feed.bump)
 STATIC_DIR = Path(__file__).parent / "static"
+
+VERSION = "0.3.0"
+# Contract version and optional features, for client discovery (docs/client-api.md).
+API_VERSION = 2
+FEATURES = ["stats", "documents_detail", "files", "events", "job_cancel", "model_suggest", "board", "conversations"]
+# Routes that never require the API key: the console shell, liveness, and the schema docs.
+OPEN_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico"}
 
 
 def _summary(results) -> dict:
@@ -61,7 +76,24 @@ async def lifespan(_: FastAPI):
     stop.set()
 
 
-app = FastAPI(title="sh-rag ingest", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="sh-rag ingest", version=VERSION, lifespan=lifespan)
+app.include_router(make_router(workspace))
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Optional bearer auth (INGEST_API_KEY). Also accepts X-API-Key or ?api_key= so
+    plain links (/files/...) and EventSource (/events) can authenticate."""
+    key = settings.api_key
+    if key and request.url.path not in OPEN_PATHS and request.method != "OPTIONS":
+        auth = request.headers.get("authorization", "")
+        supplied = auth[7:] if auth.lower().startswith("bearer ") else (
+            request.headers.get("x-api-key") or request.query_params.get("api_key") or ""
+        )
+        if not hmac.compare_digest(supplied.strip(), key):
+            return JSONResponse({"detail": "invalid or missing API key"}, status_code=401,
+                                headers={"WWW-Authenticate": "Bearer"})
+    return await call_next(request)
 
 
 class ModelBody(BaseModel):
@@ -94,6 +126,9 @@ def health() -> dict:
 @app.get("/status")
 def status() -> dict:
     out: dict = {
+        "version": VERSION,
+        "auth_required": bool(settings.api_key),
+        "api": {"version": API_VERSION, "features": FEATURES},
         "embed_model": ingestor.index.embed_model,
         "collection": ingestor.index.collection,
         "docs_path": settings.host_docs_path or str(settings.docs_dir),
@@ -114,11 +149,64 @@ def status() -> dict:
     return out
 
 
+@app.get("/stats")
+def stats() -> dict:
+    """Dashboard aggregates: document and chunk totals, by type, indexes, jobs, workspace."""
+    try:
+        out = ingestor.stats()
+    except Exception as exc:
+        raise HTTPException(502, f"could not read the index: {exc}")
+    out["jobs_running"] = sum(1 for j in jobs.list() if j["status"] == "running")
+    out["workspace"] = workspace.stats()
+    out["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return out
+
+
+@app.get("/events")
+async def events(topics: str | None = None) -> StreamingResponse:
+    """Server-Sent Events: job changes, board and conversation versions, pings."""
+    try:
+        wanted = parse_topics(topics)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return StreamingResponse(
+        event_stream(jobs, workspace, feed, wanted),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # --- documents --------------------------------------------------------------
 
 @app.get("/documents")
 def list_documents() -> dict:
     return {"documents": ingestor.list_docs()}
+
+
+@app.get("/documents/{key:path}")
+def get_document(key: str, include_text: bool = True) -> dict:
+    """One document with its passages. `key` is a doc_id or a source path."""
+    try:
+        doc = ingestor.get_doc(key, include_text=include_text)
+    except Exception as exc:
+        raise HTTPException(502, str(exc))
+    if doc is None:
+        raise HTTPException(404, f"no document with doc_id or source '{key}'")
+    return doc
+
+
+@app.get("/files/{source:path}")
+def get_file(source: str) -> FileResponse:
+    """The original file behind a source path, served inline for previews."""
+    try:
+        path = ingestor.file_for(source)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    if path is None:
+        raise HTTPException(404, f"no file '{source}' in the documents folder")
+    media, _ = mimetypes.guess_type(path.name)
+    return FileResponse(path, media_type=media or "application/octet-stream", filename=path.name,
+                        content_disposition_type="inline")
 
 
 @app.post("/documents")

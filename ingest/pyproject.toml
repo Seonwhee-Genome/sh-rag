@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sh-rag-ingest"
-version = "0.1.0"
+version = "0.3.0"
 description = "Document ingestion pipeline for the sh-rag local RAG stack"
 requires-python = ">=3.11"
 dependencies = [

@@ -2,6 +2,7 @@
 data/docs/*
 !data/docs/.gitkeep
 data/config/
+data/workspace/
 
 # Tests
 ingest/tests/

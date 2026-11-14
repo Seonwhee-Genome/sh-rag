@@ -27,9 +27,12 @@ type Model struct {
 	Name       string `json:"name"`
 	Model      string `json:"model"`
 	ModifiedAt string `json:"modified_at"`
+	Size       int64  `json:"size"`
 	Details    struct {
-		Family   string   `json:"family"`
-		Families []string `json:"families"`
+		Family            string   `json:"family"`
+		Families          []string `json:"families"`
+		ParameterSize     string   `json:"parameter_size"`
+		QuantizationLevel string   `json:"quantization_level"`
 	} `json:"details"`
 }
 

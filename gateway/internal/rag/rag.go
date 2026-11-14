@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sh-rag/gateway/internal/qdrant"
 )
@@ -20,12 +21,45 @@ type Searcher interface {
 	Query(ctx context.Context, collection string, vector []float32, limit int, threshold float64) ([]qdrant.Hit, error)
 }
 
-// Chunk is a retrieved passage with its provenance.
+// Chunk is a retrieved passage with its provenance. Index is the 1-based
+// number the model is asked to cite ([1], [2], ...). It is the "Source"
+// object of the client API contract (docs/client-api.md).
 type Chunk struct {
-	Text   string  `json:"text"`
+	Index  int     `json:"index"`
+	DocID  string  `json:"doc_id,omitempty"`
 	Source string  `json:"source"`
+	Title  string  `json:"title,omitempty"`
 	Page   int     `json:"page,omitempty"`
 	Score  float64 `json:"score"`
+	Text   string  `json:"text"`
+}
+
+// Options override the runtime settings for a single retrieval.
+type Options struct {
+	TopK      int      // <= 0 means the runtime setting
+	Threshold *float64 // nil means the runtime setting
+}
+
+// Result is what one retrieval did and found.
+type Result struct {
+	Chunks     []Chunk
+	EmbedModel string
+	Collection string
+	TopK       int
+	Threshold  float64
+	Took       time.Duration
+}
+
+// Info renders the retrieval parameters for the API's "retrieval" object.
+func (r Result) Info() map[string]any {
+	return map[string]any{
+		"embed_model":     r.EmbedModel,
+		"collection":      r.Collection,
+		"top_k":           r.TopK,
+		"score_threshold": r.Threshold,
+		"took_ms":         r.Took.Milliseconds(),
+		"skipped":         false,
+	}
 }
 
 // Params are the retrieval settings in effect for one request.
@@ -49,21 +83,29 @@ type Retriever struct {
 
 // Retrieve returns up to TopK chunks relevant to query. A missing collection
 // (nothing ingested yet) is not an error: it yields no chunks.
-func (r *Retriever) Retrieve(ctx context.Context, query string, topK int) ([]Chunk, error) {
+func (r *Retriever) Retrieve(ctx context.Context, query string, opts Options) (res Result, err error) {
 	p := r.Params()
-	if topK <= 0 {
-		topK = p.TopK
+	res = Result{EmbedModel: p.EmbedModel, Collection: p.Collection, TopK: p.TopK, Threshold: p.Threshold}
+	if opts.TopK > 0 {
+		res.TopK = opts.TopK
 	}
+	if opts.Threshold != nil {
+		res.Threshold = *opts.Threshold
+	}
+	start := time.Now()
+	defer func() { res.Took = time.Since(start) }() // named result: applies to every return below
+
 	vecs, err := r.Embedder.Embed(ctx, p.EmbedModel, []string{query})
 	if err != nil {
-		return nil, err
+		return res, err
 	}
-	hits, err := r.Searcher.Query(ctx, p.Collection, vecs[0], topK, p.Threshold)
+	hits, err := r.Searcher.Query(ctx, p.Collection, vecs[0], res.TopK, res.Threshold)
 	if errors.Is(err, qdrant.ErrCollectionNotFound) {
-		return nil, nil
+		res.Chunks = []Chunk{}
+		return res, nil
 	}
 	if err != nil {
-		return nil, err
+		return res, err
 	}
 
 	seen := make(map[string]bool, len(hits))
@@ -75,14 +117,17 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, topK int) ([]Chu
 			continue
 		}
 		seen[text] = true
-		c := Chunk{Text: text, Score: h.Score}
+		c := Chunk{Index: len(chunks) + 1, Text: text, Score: h.Score}
 		c.Source, _ = h.Payload["source"].(string)
+		c.DocID, _ = h.Payload["doc_id"].(string)
+		c.Title, _ = h.Payload["title"].(string)
 		if p, ok := h.Payload["page"].(float64); ok {
 			c.Page = int(p)
 		}
 		chunks = append(chunks, c)
 	}
-	return chunks, nil
+	res.Chunks = chunks
+	return res, nil
 }
 
 // BuildSystemPrompt renders the template with numbered context passages,

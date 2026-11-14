@@ -62,7 +62,7 @@ if (-not $SkipPull) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Get-Cfg 'DOCS_PATH' './data/docs'), './data/config' | Out-Null
+New-Item -ItemType Directory -Force -Path (Get-Cfg 'DOCS_PATH' './data/docs'), './data/config', (Get-Cfg 'WORKSPACE_PATH' './data/workspace') | Out-Null
 & docker @compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed' }
 

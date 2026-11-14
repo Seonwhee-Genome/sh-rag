@@ -35,13 +35,18 @@ services:
       RUNTIME_SETTINGS_PATH: /data/config/settings.json
       HOST_DOCS_PATH: ${DOCS_PATH:-./data/docs}
       WEBUI_URL: http://localhost:${WEBUI_PORT:-3000}
+      # Optional bearer token for the API and console (see docs/client-api.md).
+      INGEST_API_KEY: ${INGEST_API_KEY:-}
+      # Board cards and conversations for native clients.
+      WORKSPACE_DB: /data/workspace/workspace.db
     ports:
       # Also serves the web console at http://localhost:8001
-      - "127.0.0.1:${INGEST_PORT:-8001}:8001"
+      - "${BIND_ADDRESS:-127.0.0.1}:${INGEST_PORT:-8001}:8001"
     volumes:
       - ${DOCS_PATH:-./data/docs}:/data/docs
       # Runtime settings written by the console, read by the gateway.
       - ${CONFIG_PATH:-./data/config}:/data/config
+      - ${WORKSPACE_PATH:-./data/workspace}:/data/workspace
 
   gateway:
     build: ./gateway
@@ -61,7 +66,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       RUNTIME_SETTINGS_PATH: /data/config/settings.json
     ports:
-      - "127.0.0.1:${GATEWAY_PORT:-8090}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8090}:8080"
     volumes:
       - ${CONFIG_PATH:-./data/config}:/data/config:ro
 
@@ -80,7 +85,7 @@ services:
       OPENAI_API_KEY: ${GATEWAY_API_KEY:-sh-rag-local-key}
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-me-to-a-random-string}
     ports:
-      - "127.0.0.1:${WEBUI_PORT:-3000}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEBUI_PORT:-3000}:8080"
     volumes:
       - open_webui_data:/app/backend/data
 

@@ -33,6 +33,10 @@ class Settings:
     # Display-only values for the console.
     host_docs_path: str = ""
     webui_url: str = "http://localhost:3000"
+    # Optional bearer token for the API (empty = open; fine on localhost only).
+    api_key: str = ""
+    # SQLite file for the board and conversations (client workspace).
+    workspace_db: Path | None = Path("data/workspace/workspace.db")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -54,4 +58,6 @@ class Settings:
             scan_interval=int(_env("SCAN_INTERVAL", str(cls.scan_interval))),
             host=_env("INGEST_HOST", cls.host),
             port=int(_env("INGEST_PORT", str(cls.port))),
+            api_key=_env("INGEST_API_KEY", ""),
+            workspace_db=Path(_env("WORKSPACE_DB", str(cls.workspace_db))),
         )
